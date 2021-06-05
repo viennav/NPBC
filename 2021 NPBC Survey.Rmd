@@ -1,0 +1,55 @@
+---
+title: "2021 NPBC Survey"
+output: html_notebook
+---
+
+```{r, message=FALSE}
+# load packages
+library(dplyr)
+library(knitr)
+library(anytime)
+library(lubridate)
+library(stringr)
+
+# load data
+dat <- read.csv("C:\\Users\\vthompkins.CRJ\\Documents\\GitHub\\NPBC\\responses 4-25-21.csv", stringsAsFactors = FALSE)
+```
+
+```{r}
+# clean
+d <- dat %>%
+  # convert dates
+  mutate_at(vars(Start.Date..UTC., Submit.Date..UTC.), as.POSIXct, format = "%m/%d/%Y %H:%M") %>%
+         # create time to complete survey variable
+  mutate(Time.to.Complete = as.numeric(difftime(Submit.Date..UTC., Start.Date..UTC., units = "mins")),
+         # create dupe flag (looks at everything but response ID and start/submit times
+         # other items removed are text fields, contact, demographics
+         Dupe.Response = duplicated(d[, c(2:3, 5:18, 19:30, 266)]),
+         # see if police was listed as first priority
+         Priority.Police = if_else(str_detect(X.Rank.the.following.existing.and.potential.city.services.based.on.importance.from.1.to.10..._1...most.important...10...least.important_., "^Police"), 1, 0),
+         # see if funding for police is same
+         Full.Funding.Police = if_else(X.What.percentage.of.the.General.Fund.should.the.city.give.to.the.Metro.Nashville.Police.Department..MNPD... == "*20%* ($213.5 million) _(current amount)_", 1, 0),
+         # see if funding for sheriff is same
+         Full.Funding.Sheriff = if_else(X.What.percentage.of.the.General.Fund.should.the.city.give.to.the.Davidson.County.Sheriff.s.Office..DCSO...which.operates.the.city.s.jails.. == "*7.5%* ($79.9 million) _(current amount)_",  1, 0))
+```
+
+
+```{r}
+out <- d %>%
+  # group by network ID
+  group_by(Network.ID) %>%
+            # count duplicates
+  summarise(Davidson_Resident = if_else(sum(na.omit(X.Are.you.a.resident.of.Davidson.County..)) > 0, 1, 0),
+    Count.Network.IDs = n(),
+    # calculate avg time to complete
+    Avg.Time = round(mean(Time.to.Complete), digits = 0),
+    # count of dupes
+    Dupes = sum(Dupe.Response),
+    # collapse police & sheriff flags
+    Priority.Police = if_else(sum(Priority.Police) > 0, "Yes", "No"),
+    Full.Funding.Police = if_else(sum(Full.Funding.Police) > 0, "Yes", "No"),
+    Full.Funding.Sheriff = if_else(sum(Full.Funding.Sheriff) > 0, "Yes", "No")) %>%
+  arrange(desc(Count.Network.IDs))
+
+write.csv(out, file = "2021 NPBC Survey Calcs.csv", row.names = FALSE)
+```
