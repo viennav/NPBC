@@ -3,6 +3,8 @@ title: "2021 NPBC Survey"
 output: html_notebook
 ---
 
+## Setup
+
 ```{r, message=FALSE}
 # load packages
 library(dplyr)
@@ -12,8 +14,10 @@ library(lubridate)
 library(stringr)
 
 # load data
-dat <- read.csv("C:\\Users\\vthompkins.CRJ\\Documents\\GitHub\\NPBC\\responses 6-5-21.csv")
+dat <- read.csv("C:\\Users\\vthompkins.CRJ\\Documents\\GitHub\\NPBC\\Data\\responses 6-5-21.csv")
 ```
+
+## Clean & Code
 
 ```{r}
 # clean
@@ -38,9 +42,13 @@ d <- dat %>%
          Full.Funding.Police = if_else(What.percentage.of.the.General.Fund.should.the.city.give.to.the.Metro.Nashville.Police.Department..MNPD == "*20%* ($213.5 million) _(current amount)_", 1, 0),
          # see if funding for sheriff is same
          Full.Funding.Sheriff = if_else(What.percentage.of.the.General.Fund.should.the.city.give.to.the.Davidson.County.Sheriff.s.Office..DCSO...which.operates.the.city.s.jails == "*7.5%* ($79.9 million) _(current amount)_",  1, 0))
+```
 
+## Language Subsets
+
+```{r}
 # create data set of english responses
-dat_eng <- dat %>%
+d_eng <- dat %>%
   select(c(1:89, 263:265)) %>%
   # convert dates
   mutate_at(vars(Start.Date..UTC, Submit.Date..UTC), as.POSIXct, format = "%m/%d/%Y %H:%M") %>%
@@ -54,18 +62,39 @@ dat_eng <- dat %>%
          # see if funding for police is same
          Full.Funding.Police = if_else(What.percentage.of.the.General.Fund.should.the.city.give.to.the.Metro.Nashville.Police.Department..MNPD == "*20%* ($213.5 million) _(current amount)_", 1, 0),
          # see if funding for sheriff is same
-         Full.Funding.Sheriff = if_else(What.percentage.of.the.General.Fund.should.the.city.give.to.the.Davidson.County.Sheriff.s.Office..DCSO...which.operates.the.city.s.jails == "*7.5%* ($79.9 million) _(current amount)_",  1, 0))
+         Full.Funding.Sheriff = if_else(What.percentage.of.the.General.Fund.should.the.city.give.to.the.Davidson.County.Sheriff.s.Office..DCSO...which.operates.the.city.s.jails == "*7.5%* ($79.9 million) _(current amount)_",  1, 0)) %>%
+  # reorder variables
+  select(Response.ID, Network.ID, Time.to.Complete, Dupe.Response, Priority.Police, Full.Funding.Police, Full.Funding.Sheriff, everything())
 
 
 # create data set of spanish responses
+d_spa1 <- dat %>%
+  select(c(1:2, 90:176, 263:265)) %>%
+  # filter to spanish
+  filter(Language == "EspaÌ±ol")
 
-
-
-# create data set of arabic responses
+d_spa <- d_spa1 %>%
+  # convert dates
+  mutate_at(vars(Start.Date..UTC, Submit.Date..UTC), as.POSIXct, format = "%m/%d/%Y %H:%M") %>%
+         # create time to complete survey variable
+  mutate(Time.to.Complete = as.numeric(difftime(Submit.Date..UTC, Start.Date..UTC, units = "mins")),
+         # create dupe flag (looks at everything but response ID, and start/submit times)
+         # other items removed are text fields, contact, demographics
+         Dupe.Response = duplicated(d_spa1[, c(2:3, 9:35)]),
+         # see if police was listed as first priority
+         Priority.Police = if_else(str_detect(d_spa1[,9], "^PolicÌ_a"), 1, 0),
+         # see if funding for police is same
+         Full.Funding.Police = if_else(d_spa1[,10] == "*20%* ($213.5 million) _(cantidad actual)_", 1, 0),
+         # see if funding for sheriff is same
+         Full.Funding.Sheriff = if_else(d_spa1[,11] == "*7.5%* ($79.9 million) _(cantidad actual)_",  1, 0)) %>%
+  # reorder variables
+  select(Response.ID, Network.ID, Time.to.Complete, Dupe.Response, Priority.Police, Full.Funding.Police, Full.Funding.Sheriff, everything())
 ```
 
+## Summarise
 
 ```{r}
+# create summary of dupes and flags for all/english responses
 out <- d %>%
   # group by network ID
   group_by(Network.ID) %>%
@@ -82,6 +111,53 @@ out <- d %>%
     Full.Funding.Sheriff = if_else(sum(Full.Funding.Sheriff) > 0, "Yes", "No")) %>%
   arrange(desc(Count.Network.IDs))
 
+# create CSV of summary
+# write.csv(out_eng, file = "2021 NPBC Survey Calcs_English Final.csv", row.names = FALSE)
 
-write.csv(out, file = "2021 NPBC Survey Calcs_All Final.csv", row.names = FALSE)
+# create summary of dupes and flags for english responses
+out_spa <- d_spa %>%
+  # group by network ID
+  group_by(Network.ID) %>%
+            # count duplicates
+  summarise(Davidson_Resident = if_else(sum(d_spa[,9] == "Si") > 0, 1, 0),
+    Count.Network.IDs = n(),
+    # calculate avg time to complete
+    Avg.Time = round(mean(Time.to.Complete), digits = 0),
+    # count of dupes
+    Dupes = sum(Dupe.Response),
+    # collapse police & sheriff flags
+    Priority.Police = if_else(sum(Priority.Police) > 0, "Yes", "No"),
+    Full.Funding.Police = if_else(sum(Full.Funding.Police) > 0, "Yes", "No"),
+    Full.Funding.Sheriff = if_else(sum(Full.Funding.Sheriff) > 0, "Yes", "No")) %>%
+  arrange(desc(Count.Network.IDs))
+```
+
+
+
+## Merge Flags
+
+```{r}
+# select relevant cols in "out"
+out_tm <- out %>% select(Network.ID, Count.Network.IDs, Dupes)
+out_spa_tm <- out_spa %>% select(Network.ID, Count.Network.IDs, Dupes)
+
+# merge full data set - note, this only looks at english responses
+d_final1 <- left_join(d, out_tm, by = "Network.ID")
+
+# re-order
+d_final <- d_final1 %>% 
+  select(Response.ID, Network.ID, Dupes, Time.to.Complete, Priority.Police, Full.Funding.Police, Full.Funding.Sheriff, everything(), -c(Dupe.Response))
+
+# merge spanish subset
+d_spa_final1 <- left_join(d_spa, out_spa_tm, by = "Network.ID")
+
+# re-order
+d_spa_final <- d_spa_final1 %>% 
+  select(Response.ID, Network.ID, Dupes, Time.to.Complete, Priority.Police, Full.Funding.Police, Full.Funding.Sheriff, everything(), -c(Dupe.Response))
+
+
+# write csvs
+write.csv(d_final, file = "Survey_Flagged_English.csv", row.names = FALSE)
+write.csv(d_spa_final, file = "Survey_Flagged_Spanish.csv", row.names = FALSE)
+
 ```
